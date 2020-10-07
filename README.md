@@ -27,4 +27,4 @@ Each dataset is partitioned into train/dev/test, with each split consisting of t
 * GCC data: data/GCC_data
 * Crowdsourced data: data/crowdsourced_data
 
-The datasets can be downloaded from
+The datasets can be downloaded from [here](https://drive.google.com/file/d/1K2lo1Dt7GJskyUVR9x5LH-mZya28KcDY/view?usp=sharing)
