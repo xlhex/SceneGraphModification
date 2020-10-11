@@ -4,6 +4,7 @@
 This repo contains source code and pre-processed corpora for __"Scene Graph Modification Based on Natural Language Commands"__ (accepted to Findings of EMNLP 2020) ([paper](https://arxiv.org/abs/2010.02591))
 
 ## Demo
+We demonstrate four different operations one can execute on scene graphs:
 ![](https://github.com/xlhex/SceneGraphModification/blob/master/demo/graphtrans_demo1.gif)
 ![](https://github.com/xlhex/SceneGraphModification/blob/master/demo/graphtrans_demo2.gif)
 
