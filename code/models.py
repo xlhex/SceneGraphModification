@@ -1,8 +1,9 @@
 #!/usr/bin/python
 #-*-coding:utf-8 -*-
-#Author   : Zodiac
+#Author   : Xuanli He
 #Version  : 1.0
 #Filename : models.py
+
 from __future__ import print_function
 
 import copy
@@ -13,6 +14,7 @@ from functools import reduce
 import torch
 from torch import nn
 from torch.nn import functional as F
+
 
 def sequence_mask(lengths, max_len=None):
     """
@@ -25,19 +27,29 @@ def sequence_mask(lengths, max_len=None):
             .repeat(batch_size, 1)
             .lt(lengths.unsqueeze(1)))
 
+
 def clones(module, N):
     "Produce N identical layers."
     return nn.ModuleList([copy.deepcopy(module) for _ in range(N)])
 
+
 def gating(linear, keys, query):
     query = query.unsqueeze(dim=1)
-    # gates = torch.sigmoid((query * linear(keys)).sum(dim=-1))
     gates = torch.sigmoid((query * keys).sum(dim=-1))
 
     return gates.unsqueeze(dim=-1) * keys
 
+
 class GraphTrans(nn.Module):
     def __init__(self, args, node_dict, edge_dict, text_dict):
+        """
+        Model of graph modification
+
+        args: args from command line
+        node_dict: dictionary of nodes
+        edge_dict: dictionary of edges
+        text_dict: dictionary of queries
+        """
         super().__init__()
         self.args = args
         self.node_dict = node_dict
@@ -49,20 +61,12 @@ class GraphTrans(nn.Module):
         ff = PositionwiseFeedForward(args.encoder_embed_dim, args.encoder_ffn_embed_dim, args.dropout)
         # graph encoder
         self.node_embeds = Embeddings(self.args.encoder_embed_dim, len(node_dict))
-        # self.edge_embeds = Embeddings(self.args.encoder_embed_dim, len(edge_dict))
         self.edge_embeds = self.node_embeds
-        #if self.args.modification == "late":
-        #    self.graph_enc = Encoder(EncoderLayer(args.encoder_embed_dim, c(attn), c(ff), args.dropout), args.encoder_layers)
 
         # text encoder
-        # self.text_embeds = Embeddings(self.args.encoder_embed_dim, len(text_dict))
         self.text_embeds = self.node_embeds
         self.position = PositionalEncoding(args.encoder_embed_dim, args.dropout)
-        #if self.args.modification == "late":
-        #    self.text_enc = Encoder(EncoderLayer(args.encoder_embed_dim, c(attn), c(ff), args.dropout), args.encoder_layers)
-        #else:
         self.enc = Encoder(EncoderLayer(args.encoder_embed_dim, c(attn), c(ff), args.dropout), args.encoder_layers)
-
         # graph decoder
         self.graph_dec = Decoder(args, node_dict, edge_dict, self.node_embeds)
 
@@ -73,24 +77,37 @@ class GraphTrans(nn.Module):
     def compute_loss(self, nodes, node_outputs, edges, edge_outputs):
         """
         Calculate loss
+
+        nodes: ground truths of target nodes: [bsz, len]
+        node_outputs: generated target nodes: [bsz, len]
+
+        edges: ground truths of target nodes: [bsz, len]
+        edge_outputs: generated target nodes: [bsz, len]
         """
+
+        # Loss over target nodes
         bsz, tgt_len = nodes.size()
         nodes = nodes.contiguous().view(bsz*tgt_len)
         node_outputs = node_outputs.view(bsz*tgt_len, -1)
         node_loss = self.node_xent(node_outputs, nodes)
 
+        # Loss over target edge
         num_edge = edges.size(-1)
         edges = edges.contiguous().view(bsz*num_edge)
         edge_outputs = edge_outputs.view(bsz*num_edge, -1)
         edge_loss = self.edge_xent(edge_outputs, edges)
 
         sum_loss = node_loss + edge_loss
-        # num_nodes = (nodes != self.node_dict.pad()).long().sum().item()
-        # num_edges = (edges != self.node_dict.pad()).long().sum().item()
 
         return sum_loss / bsz
 
     def encoder(self, src_graph, src_text):
+        """
+        Graph encoder and query encode
+
+        src_graph: source graphs: {nodes: [bsz, node_size], edges: [bsz, edge_size]}
+        src_text: modification queries: {x: [bsz, query_size]}
+        """
         # graph embed
         node_embed = self.node_embeds(src_graph["nodes"])
         edge_embed = self.edge_embeds(src_graph["edges"])
@@ -109,26 +126,29 @@ class GraphTrans(nn.Module):
         text_embed = self.position(self.text_embeds(src_text["x"]))
         src_text_mask = src_text["x"] != self.text_dict.pad()
 
+        # late fusion or naive concatenation
         if self.args.modification == "late":
-            #print("late")
-            #graph_repr = self.graph_enc(graph_embed, adj_masks)
             graph_repr = self.enc(graph_embed, adj_masks)
 
-            #text_repr = self.text_enc(text_embed, src_text_mask.float().unsqueeze(-2))
             text_repr = self.enc(text_embed, src_text_mask.float().unsqueeze(-2))
 
             src_mems = torch.cat([graph_repr, text_repr], dim=1)
             src_masks = torch.cat([src_node_masks, src_text_mask], dim=1)
 
             enc_info = {"mem": src_mems, "mem_masks": src_masks}
+
+        # early fusion or cross attention
         else:
             enc_inputs = torch.cat([graph_embed, text_embed], dim=1)
 
             bsz, text_len, _ = text_embed.size()
             graph_size = graph_embed.size(1)
 
+            # masks of self attention from queries to graphs
             text2graph_masks = src_node_masks.unsqueeze(1).expand(bsz, text_len, graph_size)
+            # masks of self attention from queries and graphs to queries
             all2text_masks = src_text_mask.unsqueeze(1).expand(bsz, text_len+graph_size, text_len)
+            # masks of self attention from grahs to graphs, from queries to graphs, and from queries and graphs to queries
             enc_masks = torch.cat([torch.cat([adj_masks.to(text2graph_masks.dtype), text2graph_masks], dim=1), all2text_masks], dim=-1)
 
             enc_repr = self.enc(enc_inputs, enc_masks.float())
@@ -149,6 +169,7 @@ class GraphTrans(nn.Module):
         return self.compute_loss(tgt_graph["nodes"]["y"], node_outputs, tgt_graph["edges"]["y"], edge_outputs)
 
 
+# Modified from http://nlp.seas.harvard.edu/2018/04/03/attention.html
 class Encoder(nn.Module):
     "Core encoder is a stack of N layers"
     def __init__(self, layer, N):
@@ -162,6 +183,8 @@ class Encoder(nn.Module):
             x = layer(x, mask)
         return self.norm(x)
 
+
+# Modified from http://nlp.seas.harvard.edu/2018/04/03/attention.html
 class LayerNorm(nn.Module):
     "Construct a layernorm module (See citation for details)."
     def __init__(self, features, eps=1e-6):
@@ -175,6 +198,8 @@ class LayerNorm(nn.Module):
         std = x.std(-1, keepdim=True)
         return self.a_2 * (x - mean) / (std + self.eps) + self.b_2
 
+
+# Modified from http://nlp.seas.harvard.edu/2018/04/03/attention.html
 class SublayerConnection(nn.Module):
     """
     A residual connection followed by a layer norm.
@@ -189,6 +214,8 @@ class SublayerConnection(nn.Module):
         "Apply residual connection to any sublayer with the same size."
         return x + self.dropout(sublayer(self.norm(x)))
 
+
+# Modified from http://nlp.seas.harvard.edu/2018/04/03/attention.html
 class EncoderLayer(nn.Module):
     "Encoder is made up of self-attn and feed forward (defined below)"
     def __init__(self, size, self_attn, feed_forward, dropout):
@@ -203,6 +230,8 @@ class EncoderLayer(nn.Module):
         x = self.sublayer[0](x, lambda x: self.self_attn(x, x, x, mask))
         return self.sublayer[1](x, self.feed_forward)
 
+
+# Modified from http://nlp.seas.harvard.edu/2018/04/03/attention.html
 def attention(query, key, value, mask=None, dropout=None):
     "Compute 'Scaled Dot Product Attention'"
     d_k = query.size(-1)
@@ -210,15 +239,13 @@ def attention(query, key, value, mask=None, dropout=None):
              / math.sqrt(d_k)
     if mask is not None:
         scores = scores.masked_fill(mask == 0, -1e9)
-        # print(mask[0])
-        # print(scores[0])
     p_attn = F.softmax(scores, dim = -1)
-    # print(p_attn[0])
-    # print("*"*20)
     if dropout is not None:
         p_attn = dropout(p_attn)
     return torch.matmul(p_attn, value), p_attn
 
+
+# Modified from http://nlp.seas.harvard.edu/2018/04/03/attention.html
 class MultiHeadedAttention(nn.Module):
     def __init__(self, h, d_model, dropout=0.1):
         "Take in model size and number of heads."
@@ -252,6 +279,8 @@ class MultiHeadedAttention(nn.Module):
              .view(nbatches, -1, self.h * self.d_k)
         return self.linears[-1](x)
 
+
+# Modified from http://nlp.seas.harvard.edu/2018/04/03/attention.html
 class PositionwiseFeedForward(nn.Module):
     "Implements FFN equation."
     def __init__(self, d_model, d_ff, dropout=0.1):
@@ -263,6 +292,8 @@ class PositionwiseFeedForward(nn.Module):
     def forward(self, x):
         return self.w_2(self.dropout(F.relu(self.w_1(x))))
 
+
+# Modified from http://nlp.seas.harvard.edu/2018/04/03/attention.html
 class Embeddings(nn.Module):
     def __init__(self, d_model, vocab):
         super().__init__()
@@ -272,6 +303,8 @@ class Embeddings(nn.Module):
     def forward(self, x):
         return self.lut(x) * math.sqrt(self.d_model)
 
+
+# Modified from http://nlp.seas.harvard.edu/2018/04/03/attention.html
 class PositionalEncoding(nn.Module):
     "Implement the PE function."
     def __init__(self, d_model, dropout, max_len=5000):
@@ -293,7 +326,11 @@ class PositionalEncoding(nn.Module):
 
         return self.dropout(x)
 
+
 class Attention(nn.Module):
+    """
+    Luong's attention
+    """
     def __init__(self, input_size, mem_size):
         super().__init__()
         self.dim = mem_size
@@ -336,92 +373,89 @@ class Attention(nn.Module):
         
         return attn_h, align_vectors
 
+
 class Decoder(nn.Module):
     """
     Generate nodes and relations
     """
-    def __init__(self, args, node_dict, edge_dict, embeds, refinement=False):
+    def __init__(self, args, node_dict, edge_dict, embeds):
         super().__init__()
         self.args = args
         self.pad_idx = node_dict.pad()
 
         self.dropout = nn.Dropout(args.dropout)
         
-        # graph-level
+        # node-level generation
         node_types = len(node_dict)
         # self.node_embeds = nn.Embedding(node_types, args.node_embed_size, padding_idx=node_dict.pad())
         self.node_embeds = embeds
         self.node_RNN = nn.GRU(args.node_embed_size, args.node_hidden_size, batch_first=True,
                                num_layers=args.dec_layers, dropout=args.dropout)
         self.node_att = Attention(args.node_hidden_size, args.encoder_embed_dim)
-        if refinement:
-            self.node_att_ref = Attention(args.node_hidden_size, args.node_hidden_size)
-            # self.node_out_proj = nn.Linear(args.node_hidden_size*2, node_types)
+        # self.node_out_proj = nn.Linear(args.node_hidden_size, node_types)
+        if args.node_embed_size != args.encoder_embed_dim:
+            self.node_input_proj = nn.Linear(args.encoder_embed_dim, args.node_embed_size)
         else:
-            # self.node_out_proj = nn.Linear(args.node_hidden_size, node_types)
-            if args.node_embed_size != args.encoder_embed_dim:
-                self.node_input_proj = nn.Linear(args.encoder_embed_dim, args.node_embed_size)
-            else:
-                self.node_input_proj = None
-            if args.node_hidden_size != args.encoder_embed_dim:
-                self.node_out_proj = nn.Linear(args.node_hidden_size, args.encoder_embed_dim)
-            else:
-                self.node_out_proj = None
-            # pass
+            self.node_input_proj = None
+        if args.node_hidden_size != args.encoder_embed_dim:
+            self.node_out_proj = nn.Linear(args.node_hidden_size, args.encoder_embed_dim)
+        else:
+            self.node_out_proj = None
 
-        # edge-level
+        # edge-level generation
         edge_types = len(edge_dict)
         # self.edge_embeds = nn.Embedding(edge_types, args.edge_embed_size, padding_idx=edge_dict.pad())
         self.edge_embeds = embeds
         self.edge_RNN = nn.GRU(args.edge_embed_size+args.node_hidden_size*2, args.edge_hidden_size, batch_first=True,
                                num_layers=args.dec_layers, dropout=args.dropout)
         self.edge_att = Attention(args.edge_hidden_size, args.encoder_embed_dim)
-        if refinement:
-            self.edge_att_ref = Attention(args.edge_hidden_size, args.node_hidden_size)
-            # self.edge_out_proj = nn.Linear(args.edge_hidden_size*2, edge_types)
+        # self.edge_out_proj = nn.Linear(args.edge_hidden_size, edge_types)
+        if args.edge_embed_size != args.encoder_embed_dim:
+            self.edge_input_proj = nn.Linear(args.encoder_embed_dim, args.edge_embed_size)
         else:
-            # self.edge_out_proj = nn.Linear(args.edge_hidden_size, edge_types)
-            if args.edge_embed_size != args.encoder_embed_dim:
-                self.edge_input_proj = nn.Linear(args.encoder_embed_dim, args.edge_embed_size)
-            else:
-                self.edge_input_proj = None
-            if args.edge_hidden_size != args.encoder_embed_dim:
-                self.edge_out_proj = nn.Linear(args.edge_hidden_size, args.encoder_embed_dim)
-            else:
-                self.edge_out_proj = None
-
-        self.refinement = refinement
+            self.edge_input_proj = None
+        if args.edge_hidden_size != args.encoder_embed_dim:
+            self.edge_out_proj = nn.Linear(args.edge_hidden_size, args.encoder_embed_dim)
+        else:
+            self.edge_out_proj = None
 
     def node_forward(self, enc_info, nodes, nodes_len, init_hiddens=None):
-        # graph-level
+        """node-level generation
+
+        enc_info: hidden states of source graphs and source queries
+        nodes: ground truths of target nodes: [bsz, len]
+        nodes_len: masks for target nodes: [bsz, len]
+        init_hiddens: initial hidden states for RNN
+        """
         bsz, steps = nodes.size()
         nodes_embeds = self.node_embeds(nodes)
         if self.node_input_proj:
             nodes_embeds = self.node_input_proj(nodes_embeds)
 
         padded_nodes_embeds = nn.utils.rnn.pack_padded_sequence(nodes_embeds, nodes_len, batch_first=True)
-        rnn_packed_outputs, h  = self.node_RNN(padded_nodes_embeds, init_hiddens)
+        rnn_packed_outputs, h = self.node_RNN(padded_nodes_embeds, init_hiddens)
 
         rnn_outputs = nn.utils.rnn.pad_packed_sequence(rnn_packed_outputs, batch_first=True)[0]
 
-        if self.refinement:
-            enc_context, _ = self.node_att(rnn_outputs, enc_info["mem"], enc_info["mem_masks"])
-            tgt_context, _ = self.node_att(rnn_outputs, enc_info["tgt_mem"], enc_info["tgt_mem_masks"])
-            outputs = self.node_out_proj(self.dropout(torch.cat([enc_context, tgt_context], dim=-1)))
+        context, _ = self.node_att(rnn_outputs, enc_info["mem"], enc_info["mem_masks"])
+        # outputs = self.node_out_proj(self.dropout(context))
+        if self.node_out_proj:
+            outputs = self.node_out_proj(context) 
         else:
-            context, _ = self.node_att(rnn_outputs, enc_info["mem"], enc_info["mem_masks"])
-            # outputs = self.node_out_proj(self.dropout(context))
-            if self.node_out_proj:
-                outputs = self.node_out_proj(context) 
-            else:
-                outputs = context
-            outputs = F.linear(self.dropout(outputs), self.node_embeds.lut.weight)
+            outputs = context
+        outputs = F.linear(self.dropout(outputs), self.node_embeds.lut.weight)
 
         return rnn_outputs, h, outputs
 
     def edge_forward(self, enc_info, edges, src_nodes, tgt_nodes, init_hiddens=None):
         """
         Edge-level decoder
+
+        enc_info: hidden states of source graphs and source queries
+        edges: ground truths of edges of target graphs: [bsz, len]
+        src_nodes: source nodes of edges of target graphs   *src node* <-edge-> tgt node
+        tgt_nodes: target nodes of edges of target graphs    src node <-edge-> *tgt node*
+        init_hiddens: initial hidden states for RNN
         """
 
         # embedding
@@ -429,45 +463,43 @@ class Decoder(nn.Module):
         if self.edge_input_proj:
             edges_embeds = self.edge_input_proj(edges_embeds)
 
-        #rnn
+        # rnn
         rnn_inputs = torch.cat([edges_embeds, src_nodes, tgt_nodes], dim=-1)
 
-        rnn_outputs, h  = self.edge_RNN(rnn_inputs, init_hiddens)
+        rnn_outputs, h = self.edge_RNN(rnn_inputs, init_hiddens)
 
-        if self.refinement:
-            enc_context, _ = self.edge_att(rnn_outputs, enc_info["mem"], enc_info["mem_masks"])
-            tgt_context, _ = self.edge_att(rnn_outputs, enc_info["tgt_mem"], enc_info["tgt_mem_masks"])
-            outputs = self.edge_out_proj(self.dropout(torch.cat([enc_context, tgt_context], dim=-1)))
+        context, _ = self.edge_att(rnn_outputs, enc_info["mem"], enc_info["mem_masks"])
+        # outputs = self.edge_out_proj(self.dropout(context))
+        if self.edge_out_proj:
+            outputs = self.edge_out_proj(context) 
         else:
-            context, _ = self.edge_att(rnn_outputs, enc_info["mem"], enc_info["mem_masks"])
-            # outputs = self.edge_out_proj(self.dropout(context))
-            if self.edge_out_proj:
-                outputs = self.edge_out_proj(context) 
-            else:
-                outputs = context
-            outputs = F.linear(self.dropout(outputs), self.edge_embeds.lut.weight)
+            outputs = context
+        outputs = F.linear(self.dropout(outputs), self.edge_embeds.lut.weight)
 
         return rnn_outputs, h, outputs
-
 
     def forward(self, enc_info, nodes, edges):
         """
         Graph generator
         """
+        # node-level decoder
         nodes_lens = (nodes["x"] != self.pad_idx).long().sum(dim=-1)
         node_rnn_outputs, _, node_outputs = self.node_forward(enc_info, nodes["x"], nodes_lens)
 
         node_size = node_rnn_outputs.size(1)
-        src_nodes_indices = reduce(lambda x,y:x+y, [[i for _ in range(i)] for i in range(1, node_size-1)]) if node_size > 2 else []
+        # build indices of source nodes of edges of target graphs
+        src_nodes_indices = reduce(lambda x, y: x+y, [[i for _ in range(i)] for i in range(1, node_size-1)]) if node_size > 2 else []
         src_nodes_indices = src_nodes_indices + [src_nodes_indices[-1]+1] if src_nodes_indices else [0]
         src_nodes_indices = torch.tensor(src_nodes_indices).to(node_rnn_outputs.device)
         src_nodes = torch.index_select(node_rnn_outputs, 1, src_nodes_indices)
 
-        tgt_nodes_indices = reduce(lambda x,y:x+y, [[j for j in range(i)] for i in range(1, node_size-1)]) if node_size > 2 else []
+        # build indices of target nodes of edges of target graphs
+        tgt_nodes_indices = reduce(lambda x, y: x+y, [[j for j in range(i)] for i in range(1, node_size-1)]) if node_size > 2 else []
         tgt_nodes_indices = tgt_nodes_indices + [src_nodes_indices[-1]] if tgt_nodes_indices else [0]
         tgt_nodes_indices = torch.tensor(tgt_nodes_indices).to(node_rnn_outputs.device)
         tgt_nodes = torch.index_select(node_rnn_outputs, 1, tgt_nodes_indices)
 
+        # edge-level decoder
         edge_rnn_outputs, _, edge_outputs = self.edge_forward(enc_info, edges["x"], src_nodes, tgt_nodes)
 
         return node_rnn_outputs, node_outputs, edge_rnn_outputs, edge_outputs

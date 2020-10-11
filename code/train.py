@@ -1,6 +1,6 @@
 #!/usr/bin/python
 #-*-coding:utf-8 -*-
-#Author   : Zodiac
+#Author   : Xuanli He
 #Version  : 1.0
 #Filename : train.py
 from __future__ import print_function
@@ -18,10 +18,9 @@ from models import GraphTrans
 from data_utils import Dictionary, GraphReader, TextReader, GraphTransReader, BatchSampler
 from search import greedy_search
 
+
 def load_dict(args):
-    # node_dict = Dictionary().load(os.path.join(args.data_dir, "node_dict.txt"))
-    # edge_dict = Dictionary().load(os.path.join(args.data_dir, "edge_dict.txt"))
-    # text_dict = Dictionary().load(os.path.join(args.data_dir, "text_dict.txt"))
+    """ Load dictionary """
     node_dict = Dictionary().load(os.path.join(args.data_dir, "dict.txt"))
 
     node_dict.add_symbol("<blank>")
@@ -30,7 +29,11 @@ def load_dict(args):
 
     return node_dict, edge_dict, text_dict
 
+
 def load_data(args, node_dict, edge_dict, text_dict, stage="train"):
+    """ Load data
+    stage: train/dev
+    """
     src_graph = GraphReader(os.path.join(args.data_dir, "{}_src_graph.bin".format(stage)), node_dict, edge_dict)
     src_text = TextReader(os.path.join(args.data_dir, "{}_src_text.txt".format(stage)), text_dict)
     tgt_graph = GraphReader(os.path.join(args.data_dir, "{}_tgt_graph.bin".format(stage)), node_dict, edge_dict)
@@ -40,7 +43,9 @@ def load_data(args, node_dict, edge_dict, text_dict, stage="train"):
 
     return data
 
+
 def validation_acc(model, dev_iters, epoch, epochs, node_dict, edge_dict, max_nodes, cuda):
+    """ Evaluate the model on dev set"""
     model.eval()
     eval_st = time.time()
     graphs, graph_corrects = 0, 0
@@ -55,7 +60,6 @@ def validation_acc(model, dev_iters, epoch, epochs, node_dict, edge_dict, max_no
                       node_dict, edge_dict, max_nodes, cuda)
         graph_corrects += batch_graph_correct
         graphs += 1
-        #if i > 4: break
 
     acc = graph_corrects/graphs
     eval_time = (time.time() - eval_st) / 60
@@ -66,27 +70,6 @@ def validation_acc(model, dev_iters, epoch, epochs, node_dict, edge_dict, max_no
     return acc
 
 
-def validation(model, dev_iters, epoch, epochs, cuda):
-    model.eval()
-    eval_loss, eval_steps = 0., 0
-    eval_st = time.time()
-    for dev_it in dev_iters:
-        if cuda:
-            samples = move_to_cuda(dev_it)
-        else:
-            samples = dev_it
-        loss = model(samples["src_graph"], samples["src_text"], samples["tgt_graph"])
-        eval_loss += loss.item()
-        eval_steps += 1
-
-    avg_loss = eval_loss / eval_steps
-    eval_time = (time.time() - eval_st) / 60
-    eval_info = "[  Eval {:02}/{:02}]: total_loss={:.4f} avg_loss={:.4f} total_steps={:05} elapse={:.4f} mins"
-    print(eval_info.format(epoch+1, epochs, eval_loss, avg_loss, eval_steps, eval_time))
-
-    model.train()
-    return avg_loss
-    
 def main():
     parser = get_parser()
     args = parser.parse_args()
@@ -108,11 +91,11 @@ def main():
     print(" [dev     ]: {} examples".format(len(dev_data)))
 
     train_iters = DataLoader(train_data,
-                            batch_sampler=BatchSampler(torch.tensor(train_tgt_sizes), batch=args.batch_size),
-                            collate_fn=train_data.collate_fn)
+                             batch_sampler=BatchSampler(torch.tensor(train_tgt_sizes), batch=args.batch_size),
+                             collate_fn=train_data.collate_fn)
     dev_iters = DataLoader(dev_data,
-                          batch_sampler=BatchSampler(torch.tensor(dev_tgt_sizes), batch=1),
-                          collate_fn=dev_data.collate_fn)
+                           batch_sampler=BatchSampler(torch.tensor(dev_tgt_sizes), batch=1),
+                           collate_fn=dev_data.collate_fn)
 
     model = GraphTrans(args, node_dict, edge_dict, text_dict)
     print('| num. model params: {} (num. trained: {})'.format(
@@ -130,39 +113,19 @@ def main():
     opt.zero_grad()
 
     saved = load_model(args, model, optimizer=opt)
+
+    # load save model and optimizer from disk
     if saved:
-        #best_val = saved["best_val"]
-        best_val = 0.
+        best_val = saved["best_val"]
+        # best_val = 0.
         start_epoch = saved["epoch"]
 
     for epoch in range(start_epoch, args.epochs):
-        # if epoch > 4: break
         model.train()
         epoch_loss, epoch_steps = 0., 0
         epoch_st = time.time()
 
         for train_it in train_iters:
-            # print(train_it["ids"][0])
-            # print(node_dict.string(train_it["src_graph"]["nodes"][0]))
-            # print(train_it["src_graph"]["edges"][0])
-            # print("-"*20)
-            # print(edge_dict.string(train_it["src_graph"]["edges"][0]))
-            # print("-"*20)
-            # print(text_dict.string(train_it["src_text"]["x"][0]))
-            # print("-"*20)
-            # print(node_dict.string(train_it["tgt_graph"]["nodes"]["x"][0]))
-            # print("-"*20)
-            # print(node_dict.string(train_it["tgt_graph"]["nodes"]["y"][0]))
-            # print("-"*20)
-            # print(train_it["tgt_graph"]["edges"]["x"][0])
-            # print("-"*20)
-            # print(edge_dict.string(train_it["tgt_graph"]["edges"]["x"][0]))
-            # print("-"*20)
-            # print(train_it["tgt_graph"]["edges"]["y"][0])
-            # print("-"*20)
-            # print(edge_dict.string(train_it["tgt_graph"]["edges"]["y"][0]))
-            # print("-"*20)
-            # break
             if cuda:
                 samples = move_to_cuda(train_it)
             else:
@@ -178,34 +141,26 @@ def main():
 
                 total_steps = opt.get_step()
 
+                # evaluate the model on dev set
                 if total_steps % args.eval_step == 0:
-                    # val_loss = validation(model, dev_iters, epoch, args.epochs, cuda)
                     val_acc = validation_acc(model, dev_iters, epoch, args.epochs, node_dict, edge_dict, 10, cuda)
-                    # if val_loss < best_val:
                     if val_acc > best_val:
                         save_model(args, model, opt, epoch, best_val, "best")
-                        # best_val = val_loss
                         best_val = val_acc
-            # # # print(loss.item())
-            # # # print("-"*20)
-            # # # break
 
                 epoch_steps += 1
             batch_step += 1
 
-
-        # val_loss = validation(model, dev_iters, epoch, args.epochs, cuda)
         val_acc = validation_acc(model, dev_iters, epoch, args.epochs, node_dict, edge_dict, 10, cuda)
-        # if val_loss < best_val:
         if val_acc > best_val:
             save_model(args, model, opt, epoch, best_val, "best")
-            # best_val = val_loss
             best_val = val_acc
 
         save_model(args, model, opt, epoch+1, best_val, "last")
         epoch_time = (time.time() - epoch_st) / 60
         train_info = "[Train {:02}/{:02}]: total_loss={:.4f} avg_loss={:.4f} total_steps={:05} elapse={:.4f} mins best_val={:.4f} lr={:.4f}"
         print(train_info.format(epoch+1, args.epochs, epoch_loss, epoch_loss/epoch_steps, total_steps, epoch_time, best_val, opt.rate()))
+
 
 if __name__ == "__main__":
     main()

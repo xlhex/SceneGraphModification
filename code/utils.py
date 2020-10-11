@@ -1,6 +1,6 @@
 #!/usr/bin/python
 #-*-coding:utf-8 -*-
-#Author   : Zodiac
+#Author   : Xuanli He
 #Version  : 1.0
 #Filename : utils.py
 from __future__ import print_function
@@ -11,7 +11,9 @@ import os
 
 import torch
 
+
 def get_parser(stage="train"):
+    """Parsing arguments from command line"""
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", default="data")
     parser.add_argument("--tensorboad-logdir", default="tblog")
@@ -32,7 +34,7 @@ def get_parser(stage="train"):
     parser.add_argument("--edge-hidden-size", default=256, type=int)
 
     # training
-    if stage=="train":
+    if stage == "train":
         parser.add_argument("--epochs", default=20, type=int)
         parser.add_argument("--batch-size", default=64, type=int)
         parser.add_argument("--eval-step", default=5000, type=int)
@@ -41,12 +43,13 @@ def get_parser(stage="train"):
         parser.add_argument("--clip-norm", default=25.0, type=float)
         parser.add_argument("--accumulation-steps", default=9, type=int)
 
-    if stage=="test":
+    if stage == "test":
         parser.add_argument('--greedy-search', action='store_true', help='disable progress bar')
         parser.add_argument("--batch-size", default=64, type=int)
         parser.add_argument("--max-nodes", default=15, type=int)
 
     return parser
+
 
 class NoamOpt():
     "Optim wrapper that implements rate."
@@ -68,7 +71,7 @@ class NoamOpt():
         self._rate = rate
         self.optimizer.step()
         
-    def rate(self, step = None):
+    def rate(self, step=None):
         "Implement `lrate` above"
         if step is None:
             step = self._step
@@ -101,12 +104,16 @@ class NoamOpt():
     def get_step(self):
         return self._step
         
+
 def get_std_opt(args, model):
+    """Build a optimizer"""
     return NoamOpt(args.encoder_embed_dim, 2, args.warmup,
                    torch.optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.98), eps=1e-9),
                    model.parameters())
 
+
 def save_model(args, model, optimizer, cur_epoch, best_val, type="last"):
+    """Save model and optimizer"""
     if not os.path.exists(args.ckpt_dir):
         os.makedirs(args.ckpt_dir)
     path = os.path.join(args.ckpt_dir, "{}_model".format(type))
@@ -116,7 +123,9 @@ def save_model(args, model, optimizer, cur_epoch, best_val, type="last"):
 
     torch.save(saved, path)
 
+
 def load_model(args, model, inference=False, optimizer=None):
+    """Load saved model and optimizer from the specified path"""
     if inference:
         path = os.path.join(args.ckpt_dir, "best_model")
     else:
@@ -130,6 +139,7 @@ def load_model(args, model, inference=False, optimizer=None):
         return {"best_val": ckpt["best_val"], "epoch": ckpt["epoch"]}
 
     return {}
+
 
 def apply_to_sample(f, sample):
     if len(sample) == 0:
@@ -152,7 +162,7 @@ def apply_to_sample(f, sample):
 
 
 def move_to_cuda(sample):
-
+    """Move a minibatch of data fro CPU to GPU"""
     def _move_to_cuda(tensor):
         return tensor.cuda()
 

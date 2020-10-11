@@ -1,6 +1,6 @@
 #!/usr/bin/python
 #-*-coding:utf-8 -*-
-#Author   : Zodiac
+#Author   : Xuanli He
 #Version  : 1.0
 #Filename : train.py
 from __future__ import print_function
@@ -21,10 +21,8 @@ from utils import get_parser, save_model, load_model, get_std_opt, move_to_cuda
 from models import GraphTrans
 from data_utils import Dictionary, GraphReader, TextReader, GraphTransReader, BatchSampler
 
+
 def load_dict(args):
-    # node_dict = Dictionary().load(os.path.join(args.data_dir, "node_dict.txt"))
-    # edge_dict = Dictionary().load(os.path.join(args.data_dir, "edge_dict.txt"))
-    # text_dict = Dictionary().load(os.path.join(args.data_dir, "text_dict.txt"))
     node_dict = Dictionary().load(os.path.join(args.data_dir, "dict.txt"))
 
     node_dict.add_symbol("<blank>")
@@ -32,6 +30,7 @@ def load_dict(args):
     text_dict = node_dict
 
     return node_dict, edge_dict, text_dict
+
 
 def load_data(args, node_dict, edge_dict, text_dict, stage="train"):
     src_graph = GraphReader(os.path.join(args.data_dir, "{}_src_graph.bin".format(stage)), node_dict, edge_dict)
@@ -42,6 +41,7 @@ def load_data(args, node_dict, edge_dict, text_dict, stage="train"):
                             stage)
 
     return data
+
 
 def decoding(graph_dec, enc_info, node_dict, edge_dict, max_nodes, cuda):
     step = 0
@@ -81,8 +81,8 @@ def decoding(graph_dec, enc_info, node_dict, edge_dict, max_nodes, cuda):
     if cuda:
         input = input.cuda()
 
-    src_nodes = reduce(lambda x,y:x+y, [[i for _ in range(i)] for i in range(1, max_step)]) if max_step > 1 else []
-    tgt_nodes = reduce(lambda x,y:x+y, [[j for j in range(i)] for i in range(1, max_step)]) if max_step > 1 else []
+    src_nodes = reduce(lambda x, y: x+y, [[i for _ in range(i)] for i in range(1, max_step)]) if max_step > 1 else []
+    tgt_nodes = reduce(lambda x, y: x+y, [[j for j in range(i)] for i in range(1, max_step)]) if max_step > 1 else []
 
     edge_rnn_outputs = []
     for src, tgt in zip(src_nodes, tgt_nodes):
@@ -104,35 +104,21 @@ def decoding(graph_dec, enc_info, node_dict, edge_dict, max_nodes, cuda):
 
     return inputs, node_rnn_outputs, edges, edge_rnn_outputs, src_nodes, tgt_nodes
 
+
 def greedy_search(model, src_graph, src_text, tgt_graph,
-                  node_dict, edge_dict, max_nodes, cuda, refinement=False):
+                  node_dict, edge_dict, max_nodes, cuda):
     # graph encoder
     enc_info = model.encoder(src_graph, src_text)
-    if refinement:
-        # first decoder
-        _, node_rnn_outputs, _, edge_rnn_outputs, _, _ = decoding(model.graph_dec, enc_info,
-                                                                  node_dict, edge_dict, max_nodes, cuda)
-        bsz, node_size, _ = node_rnn_outputs.size()
-        tgt_node_masks = torch.ones(bsz, node_size, dtype=torch.uint8).to(node_rnn_outputs.device)
-        updated_tgt_nodes = model.tgt_graph_info(node_rnn_outputs, edge_rnn_outputs, tgt_node_masks.float()) # exclude <eos>
-        tgt_repr = model.enc(updated_tgt_nodes, tgt_node_masks.float().unsqueeze(-2))
-
-        enc_info["tgt_mem"] = tgt_repr
-        enc_info["tgt_mem_masks"] = tgt_node_masks
-
-        inputs, _, edges, _, src_nodes, tgt_nodes = decoding(model.graph_2nd_dec, enc_info,
-                                                             node_dict, edge_dict, max_nodes, cuda)
-    else:
-        inputs, _, edges, _, src_nodes, tgt_nodes = decoding(model.graph_dec, enc_info,
-                                                             node_dict, edge_dict, max_nodes, cuda)
+    inputs, _, edges, _, src_nodes, tgt_nodes = decoding(model.graph_dec, enc_info,
+                                                         node_dict, edge_dict, max_nodes, cuda)
         
     node_c = Counter()
     act_outputs = [i.item() for i in tgt_graph["nodes"]["y"][0][:-1]]
     node_total_num = len(act_outputs)
     node_c.update(act_outputs)
     for node in inputs:
-        if node in node_c and node_c[node] > 0:
-        #if node in node_c and node_c[node] > 0 and node != node_dict.unk():
+        # if node in node_c and node_c[node] > 0:
+        if node in node_c and node_c[node] > 0 and node != node_dict.unk():
             node_c[node] -= 1
 
     node_incorrect = sum([node_c[k] for k in node_c])
@@ -183,6 +169,7 @@ def greedy_search(model, src_graph, src_text, tgt_graph,
 
     return (node_correct, edge_correct), (node_total_num, edge_total_num), (len(inputs), len(pred_edges)), graph_correct
 
+
 def main():
     parser = get_parser("test")
     args = parser.parse_args()
@@ -217,26 +204,6 @@ def main():
     graphs, graph_corrects = 0, 0
 
     for i, test_it in enumerate(test_iters):
-        # print(node_dict.string(train_it["src_graph"]["nodes"][0]))
-        # print(train_it["src_graph"]["edges"][0])
-        # print("-"*20)
-        # print(edge_dict.string(train_it["src_graph"]["edges"][0]))
-        # print("-"*20)
-        # print(text_dict.string(train_it["src_text"]["x"][0]))
-        # print("-"*20)
-        # print(node_dict.string(train_it["tgt_graph"]["nodes"]["x"][0]))
-        # print("-"*20)
-        # print(node_dict.string(train_it["tgt_graph"]["nodes"]["y"][0]))
-        # print("-"*20)
-        # print(train_it["tgt_graph"]["edges"]["x"][0])
-        # print("-"*20)
-        # print(edge_dict.string(train_it["tgt_graph"]["edges"]["x"][0]))
-        # print("-"*20)
-        # print(train_it["tgt_graph"]["edges"]["y"][0])
-        # print("-"*20)
-        # print(edge_dict.string(train_it["tgt_graph"]["edges"]["y"][0]))
-        # print("="*20)
-        # break
         if cuda:
             samples = move_to_cuda(test_it)
         else:
@@ -253,11 +220,11 @@ def main():
         edges_pred += batch_pred[1]
         graph_corrects += batch_graph_correct
         graphs += 1
-        #if i > 4: break
 
-    print("Node: Recall: {:.2f}({}/{}), Precision: {:.2f}({}/{}) ".format(nodes_correct/nodes_num * 100, nodes_correct, nodes_num, nodes_correct/nodes_pred* 100, nodes_correct, nodes_pred))
-    print("Edge: Recall: {:.2f}({}/{}), Precision: {:.2f}({}/{}) ".format(edges_correct/edges_num * 100, edges_correct, edges_num, edges_correct/edges_pred* 100, edges_correct, edges_pred))
+    print("Node: Recall: {:.2f}({}/{}), Precision: {:.2f}({}/{}) ".format(nodes_correct/nodes_num * 100, nodes_correct, nodes_num, nodes_correct/nodes_pred * 100, nodes_correct, nodes_pred))
+    print("Edge: Recall: {:.2f}({}/{}), Precision: {:.2f}({}/{}) ".format(edges_correct/edges_num * 100, edges_correct, edges_num, edges_correct/edges_pred * 100, edges_correct, edges_pred))
     print("Accuracy: {:.2f}({}/{})".format(graph_corrects/graphs * 100, graph_corrects, graphs))
+
 
 if __name__ == "__main__":
     main()

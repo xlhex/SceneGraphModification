@@ -1,6 +1,6 @@
 #!/usr/bin/python
 #-*-coding:utf-8 -*-
-#Author   : Zodiac
+#Author   : Xuanli He
 #Version  : 1.0
 #Filename : data_utils.py
 from __future__ import print_function
@@ -15,6 +15,7 @@ from collections import Counter
 
 from torch.utils.data import Dataset, Sampler, DataLoader
 from torch.nn import functional as F
+
 
 def collate_tokens(values, pad_idx, shape):
     """Convert a list of nd tensors into a padded (n+1)d tensor."""
@@ -31,17 +32,12 @@ def collate_tokens(values, pad_idx, shape):
             copy_tensor(v, res[i, :v.size(0), :v.size(1)])
     return res
 
-def randomwalk(nodes, edges):
-    new_seqs = [np.random.permutation(n.size(0)) for n in nodes]
-    nodes = [nodes[i][new_seq] for i, new_seq in enumerate(new_seqs)]
-    edges = [edges[i][np.ix_(new_seq, new_seq)] for i, new_seq in enumerate(new_seqs)]
-
-    return nodes, edges
 
 def flatten_edge(edges):
     flat_edges = [edge.view(-1)[torch.tril(edge, -1).view(-1).nonzero()].view(-1) for edge in edges]
 
     return flat_edges
+
 
 def shift_for_output(nodes, edges, eos_idx, pad_idx):
     # nodes
@@ -52,8 +48,8 @@ def shift_for_output(nodes, edges, eos_idx, pad_idx):
     edges_x = [torch.cat([e.new(1).fill_(eos_idx), e]) for e in edges]
     edges_y = [torch.cat([e, e.new(1).fill_(eos_idx)]) for e in edges]
 
-
     return nodes_x, nodes_y, edges_x, edges_y
+
 
 def collate_fn(samples, pad_idx, eos_idx, train):
 
@@ -83,9 +79,6 @@ def collate_fn(samples, pad_idx, eos_idx, train):
 
         nodes = [s[0] for s in values]
         edges = [s[1] for s in values]
-
-        # if train:
-            # nodes, edges = randomwalk(nodes, edges)
 
         edges = flatten_edge(edges)
         nodes_x, nodes_y, edges_x, edges_y = shift_for_output(nodes, edges, eos_idx, pad_idx)
@@ -125,6 +118,7 @@ def collate_fn(samples, pad_idx, eos_idx, train):
                                      }
                          }
             }
+
 
 class Dictionary(object):
     def __init__(self, pad="<pad>", eos="</s>", unk="<unk>"):
@@ -229,7 +223,11 @@ class Dictionary(object):
 
         return ids
 
+
 class GraphTransReader(Dataset):
+    """
+    Graph modification dataset
+    """
     def __init__(self, src_graph, query, tgt_graph, pad_idx, eos_idx, blank_idx, stage="train"):
         assert len(src_graph) == len(query) == len(tgt_graph)
 
@@ -256,6 +254,7 @@ class GraphTransReader(Dataset):
     def collate_fn(self, samples):
         return collate_fn(samples, self.pad_idx, self.eos_idx, train=self.stage=="train")
 
+
 class BatchSampler(Sampler):
     def __init__(self, sizes, batch=32):
         _, indices = torch.sort(sizes, descending=True)
@@ -273,6 +272,9 @@ class BatchSampler(Sampler):
 
 
 class GraphReader(Dataset):
+    """
+    Graph dataset
+    """
     def __init__(self, path, node_dictionary, edge_dictionary):
         self.nodes_list = []
         self.edges_list = []
@@ -283,6 +285,9 @@ class GraphReader(Dataset):
 
     def read_data(self, path, node_dict, edge_dict):
         def parse_graph(g, node_dict, edge_dict):
+            """
+            convert graph stored in networkx into nodes and edges
+            """
             num_nodes = g.number_of_nodes()
             nodes = [node[-1]["feature"] for node in g.nodes.data()]
             edges = [["<blank>" for _ in range(num_nodes)] for _ in range(num_nodes)]
@@ -327,7 +332,11 @@ class GraphReader(Dataset):
     def item_size(self, index):
         return self.sizes[index]
 
+
 class TextReader(Dataset):
+    """
+    Query dataset
+    """
     def __init__(self, path, dictionary):
         self.tokens_list = []
         self.lines = []
@@ -360,6 +369,7 @@ class TextReader(Dataset):
     def item_size(self, index):
         return self.sizes[index]
 
+
 def build_dictionary_from_text(data_file, dict_file, threshold=0, max_vocab=-1):
     if not os.path.exists(dict_file):
         c = Counter()
@@ -377,6 +387,7 @@ def build_dictionary_from_text(data_file, dict_file, threshold=0, max_vocab=-1):
             for v in vocab:
                 f.write(v)
                 f.write("\n")
+
 
 def build_dictionary_from_bin(data_files, node_dict_file, edge_dict_file, threshold=0, max_vocab=-1):
     if not os.path.exists(node_dict_file) or not os.path.exists(edge_dict_file):
@@ -412,6 +423,7 @@ def build_dictionary_from_bin(data_files, node_dict_file, edge_dict_file, thresh
             for v in edge_vocab:
                 f.write(v)
                 f.write("\n")
+
 
 def build_dictionary(graph_data_files, text_data_file, dict_file, threshold=0, max_vocab=-1):
     if not os.path.exists(dict_file):
