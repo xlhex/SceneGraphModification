@@ -32,7 +32,7 @@ Each dataset is partitioned into train/dev/test, with each split consisting of t
 The datasets can be downloaded from [here](https://drive.google.com/file/d/1K2lo1Dt7GJskyUVR9x5LH-mZya28KcDY/view?usp=sharing)
 
 ## Train a model
-The following code shows how we can train an early fusion model for a given dataset
+The following code shows how we can train an early fusion (cross-attention) model for a given dataset
 ```shell
 cd code
 
