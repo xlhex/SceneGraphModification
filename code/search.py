@@ -210,7 +210,7 @@ def main():
             samples = test_it
 
         batch_correct, batch_num, batch_pred, batch_graph_correct = greedy_search(model, samples["src_graph"], samples["src_text"], samples["tgt_graph"],
-                      node_dict, edge_dict, args.max_nodes, cuda, False)
+                      node_dict, edge_dict, args.max_nodes, cuda)
 
         nodes_correct += batch_correct[0]
         nodes_num += batch_num[0]
