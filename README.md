@@ -11,7 +11,7 @@ We demonstrate four different operations one can execute on scene graphs:
 
 ## Dependencies
 * python3
-* pytorch>=1.4
+* pytorch==1.1
 * networkx
 * spacy>=2.3.1
 
